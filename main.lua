@@ -78,12 +78,15 @@ function love.draw()
     love.graphics.print(text, 10, 10)
 end
 
+local contactCount = 0
 function beginContact(a, b, coll)
     x,y = coll:getNormal()
     local ud_a = a:getUserData();
     local ud_b = b:getUserData();
 
     if (ud_a == "Ball") or (ud_b == "Ball") then
+      contactCount = contactCount + 1
+      text = text.."\nContacts: "..contactCount
       acel.x = x
       acel.y = y
       okToJump = true
@@ -99,8 +102,13 @@ function endContact(a, b, coll)
     local ud_b = b:getUserData();
 
     if (ud_a == "Ball") or (ud_b == "Ball") then
-      acel.x = 0
-      acel.y = -1
+      contactCount = contactCount - 1
+      text = text.."\nContacts: "..contactCount
+      if contactCount < 1 then
+        acel.x = 0
+        acel.y = -0.3 -- small amount of 'air' control
+        okToJump = false
+      end
     end
     text = text.."\n"..a:getUserData().." uncolliding with "..b:getUserData()
 end
