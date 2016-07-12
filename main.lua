@@ -16,6 +16,14 @@ function love.load()
         ball.f:setRestitution(0.1)    -- make it less bouncy
         ball.f:setFriction(0.4)
         ball.f:setUserData("Ball")
+
+    water = {}
+        water.b = love.physics.newBody(world, 0,600, "static")
+        water.s = love.physics.newRectangleShape(1000,400)
+        water.f = love.physics.newFixture(water.b, water.s)
+        water.f:setUserData("Water")
+        water.f:setSensor(true)
+
     static = {}
         static.b = love.physics.newBody(world, 400,400, "static")
         static.s = love.physics.newRectangleShape(1000,10)
@@ -45,11 +53,18 @@ function love.keypressed(key)
   if key == 'escape' then love.event.quit() end
 end
 
+local contactCount = 0
+local inWater = 0
 function love.update(dt)
     world:update(dt)
 
+    if inWater > 0 then
+      local bouyForce = math.min(400, math.max(0, ball.b:getY() - (water.b:getY() - 350)) * 1.75 )
+      ball.b:applyForce(0, -bouyForce)
+    end
+
     if love.keyboard.isDown("right") then
-        ball.b:applyForce(acel.y * -1000, acel.x * 1000)
+      ball.b:applyForce(acel.y * -1000, acel.x * 1000)
     elseif love.keyboard.isDown("left") then
       ball.b:applyForce(acel.y * 1000, acel.x * -1000)
     end
@@ -70,6 +85,10 @@ function love.update(dt)
 end
 
 function love.draw()
+    love.graphics.setColor(0, 0, 255, 255)
+    love.graphics.polygon("line", water.b:getWorldPoints(water.s:getPoints()))
+
+    love.graphics.setColor(255, 255, 255, 255)
     love.graphics.circle("line", ball.b:getX(),ball.b:getY(), ball.s:getRadius(), 20)
     --love.graphics.polygon("line", ball.b:getWorldPoints(ball.s:getPoints()))
     love.graphics.polygon("line", static.b:getWorldPoints(static.s:getPoints()))
@@ -78,18 +97,22 @@ function love.draw()
     love.graphics.print(text, 10, 10)
 end
 
-local contactCount = 0
 function beginContact(a, b, coll)
     x,y = coll:getNormal()
     local ud_a = a:getUserData();
     local ud_b = b:getUserData();
 
     if (ud_a == "Ball") or (ud_b == "Ball") then
-      contactCount = contactCount + 1
-      text = text.."\nContacts: "..contactCount
-      acel.x = x
-      acel.y = y
-      okToJump = true
+      if (ud_a == "Block") or (ud_b == "Block") then
+        contactCount = contactCount + 1
+        text = text.."\nContacts: "..contactCount
+        acel.x = x
+        acel.y = y
+        okToJump = true
+      elseif (ud_a == "Water") or (ud_b == "Water") then
+        inWater = inWater + 1
+        ball.b:setLinearDamping( 4 )
+      end
     end
 
     text = text.."\n"..a:getUserData().." colliding with "..b:getUserData().." with a vector normal of: "..x..", "..y
@@ -102,7 +125,15 @@ function endContact(a, b, coll)
     local ud_b = b:getUserData();
 
     if (ud_a == "Ball") or (ud_b == "Ball") then
-      contactCount = contactCount - 1
+      if (ud_a == "Block") or (ud_b == "Block") then
+        contactCount = contactCount - 1
+      elseif (ud_a == "Water") or (ud_b == "Water") then
+        inWater = inWater - 1
+        if inWater < 1 then
+          ball.b:setLinearDamping( 0 )
+        end
+      end
+
       text = text.."\nContacts: "..contactCount
       if contactCount < 1 then
         acel.x = 0
