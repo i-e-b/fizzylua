@@ -3,11 +3,12 @@ local acel = {x=0, y=0}
 
 function love.load()
     world = love.physics.newWorld(0, 200, true)
+    --love.physics.setMeter(30) --the height of a meter our world
+    --world = love.physics.newWorld(0, 9.81*30, true)
     world:setCallbacks(beginContact, endContact, preSolve, postSolve)
 -- friction works on polyshapes, but not circle shapes unless they are pinned,
 -- as they will freely rotate
     ball = {}
-        --ball.s = love.physics.newRectangleShape(20, 20)
         ball.s = love.physics.newCircleShape(20)
         ball.b = love.physics.newBody(world, 400,200, "dynamic")
         ball.f = love.physics.newFixture(ball.b, ball.s)
@@ -40,10 +41,13 @@ function love.load()
         static2.f:setUserData("Block")
         static2.f:setFriction(0.4)
 
-    -- todo: add this joint on contact?
-    --joint = love.physics.newFrictionJoint( static.b, ball.b, 400, 100, true )
-    --joint:setMaxForce( 800 )
-    --joint:setMaxTorque( 100 )
+    glass = {}
+        glass.b = love.physics.newBody(world, 0,400, "static")
+        glass.s = love.physics.newRectangleShape(1000,2)
+        glass.f = love.physics.newFixture(glass.b, glass.s)
+        glass.f:setUserData("Smash")
+        glass.f:setFriction(0.01)
+
 
     text       = ""   -- we'll use this to put info text on the screen later
     persisting = 0    -- we'll use this to store the state of repeated callback calls
@@ -68,15 +72,15 @@ function love.update(dt)
     elseif love.keyboard.isDown("left") then
       ball.b:applyForce(acel.y * 1000, acel.x * -1000)
     end
-    if love.keyboard.isDown("up") and okToJump then
-        ball.b:applyForce(acel.x * 8000, acel.y * 8000)
-        --ball.b:applyForce(0, -8000)
-        okToJump = false
+    if love.keyboard.isDown("up") and (okToJump or inWater > 0) then
+      local jumpForce = 1000
+      if (okToJump) then jumpForce = 8000 end
+      ball.b:applyForce(acel.x * jumpForce, acel.y * jumpForce)
     elseif love.keyboard.isDown("down") then
-        ball.b:applyForce(0, 1000)
+      ball.b:applyForce(0, 1000)
     end
 
-    if string.len(text) > 768 then    -- cleanup when 'text' gets too long
+    if string.len(text) > 300 then    -- cleanup when 'text' gets too long
         text = ""
     end
 
@@ -85,15 +89,22 @@ function love.update(dt)
 end
 
 function love.draw()
-    love.graphics.setColor(0, 0, 255, 255)
-    love.graphics.polygon("line", water.b:getWorldPoints(water.s:getPoints()))
-
     love.graphics.setColor(255, 255, 255, 255)
-    love.graphics.circle("line", ball.b:getX(),ball.b:getY(), ball.s:getRadius(), 20)
+    love.graphics.circle("fill", ball.b:getX(),ball.b:getY(), ball.s:getRadius(), 20)
     --love.graphics.polygon("line", ball.b:getWorldPoints(ball.s:getPoints()))
-    love.graphics.polygon("line", static.b:getWorldPoints(static.s:getPoints()))
-    love.graphics.polygon("line", static2.b:getWorldPoints(static2.s:getPoints()))
 
+    love.graphics.polygon("fill", static.b:getWorldPoints(static.s:getPoints()))
+    love.graphics.polygon("fill", static2.b:getWorldPoints(static2.s:getPoints()))
+
+
+    if (not glass.b:isDestroyed()) then
+      love.graphics.polygon("fill", glass.b:getWorldPoints(glass.s:getPoints()))
+    end
+
+    love.graphics.setColor(0, 0, 255, 100)
+    love.graphics.polygon("fill", water.b:getWorldPoints(water.s:getPoints()))
+
+    love.graphics.setColor(255, 255, 0, 255)
     love.graphics.print(text, 10, 10)
 end
 
@@ -101,11 +112,12 @@ function beginContact(a, b, coll)
     x,y = coll:getNormal()
     local ud_a = a:getUserData();
     local ud_b = b:getUserData();
+    local contactSpeed = getImpactSpeed(a:getBody(),b:getBody())
 
     if (ud_a == "Ball") or (ud_b == "Ball") then
-      if (ud_a == "Block") or (ud_b == "Block") then
+      if (ud_a == "Block") or (ud_b == "Block") or (ud_a == "Smash") or (ud_b == "Smash") then
         contactCount = contactCount + 1
-        text = text.."\nContacts: "..contactCount
+        --text = text.."\nContacts: "..contactCount
         acel.x = x
         acel.y = y
         okToJump = true
@@ -115,7 +127,23 @@ function beginContact(a, b, coll)
       end
     end
 
-    text = text.."\n"..a:getUserData().." colliding with "..b:getUserData().." with a vector normal of: "..x..", "..y
+    if (ud_a == "Smash") and (contactSpeed > 300) then
+      a:getBody():destroy()
+    elseif (ud_b == "Smash") and (contactSpeed > 300) then
+      b:getBody():destroy()
+    end
+
+    --text = text.."\n"..a:getUserData().." colliding with "..b:getUserData().." with a vector normal of: "..x..", "..y
+    text = text .. "\n Speed:" .. contactSpeed
+end
+
+function getImpactSpeed(a,b)
+  local ax, ay = a:getLinearVelocity()
+  local bx, by = b:getLinearVelocity()
+  local vx = bx - ax
+  local vy = by - ay
+
+  return math.sqrt(vx * vx + vy * vy)
 end
 
 function endContact(a, b, coll)
@@ -125,7 +153,7 @@ function endContact(a, b, coll)
     local ud_b = b:getUserData();
 
     if (ud_a == "Ball") or (ud_b == "Ball") then
-      if (ud_a == "Block") or (ud_b == "Block") then
+      if (ud_a == "Block") or (ud_b == "Block") or (ud_a == "Smash") or (ud_b == "Smash") then
         contactCount = contactCount - 1
       elseif (ud_a == "Water") or (ud_b == "Water") then
         inWater = inWater - 1
@@ -134,21 +162,21 @@ function endContact(a, b, coll)
         end
       end
 
-      text = text.."\nContacts: "..contactCount
+      --text = text.."\nContacts: "..contactCount
       if contactCount < 1 then
         acel.x = 0
         acel.y = -0.3 -- small amount of 'air' control
         okToJump = false
       end
     end
-    text = text.."\n"..a:getUserData().." uncolliding with "..b:getUserData()
+    --text = text.."\n"..a:getUserData().." uncolliding with "..b:getUserData()
 end
 
 function preSolve(a, b, coll)
     if persisting == 0 then    -- only say when they first start touching
-        text = text.."\n"..a:getUserData().." touching "..b:getUserData()
+        --text = text.."\n"..a:getUserData().." touching "..b:getUserData()
     elseif persisting < 20 then    -- then just start counting
-        text = text.." "..persisting
+        --text = text.." "..persisting
     end
     persisting = persisting + 1    -- keep track of how many updates they've been touching for
 end
