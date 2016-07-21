@@ -2,7 +2,6 @@ local okToJump = false
 local acel = {x=0, y=0}
 local objects = {}
 local ball -- keep a reference for simple control
-local water -- need to make this more general!
 
 function love.load()
     world = love.physics.newWorld(0, 200, true)
@@ -17,7 +16,7 @@ function love.load()
     ball.f:setRestitution(0.1)    -- make it less bouncy
     ball.f:setFriction(0.4)
 
-    water = NewSimpleThing(rect(1000,400), 0, 600, "static", {water=true})
+    local water = NewSimpleThing(rect(1000,400), 0, 600, "static", {water=true})
     water.f:setSensor(true)
 
     local floor1 = NewSimpleThing(rect(1000, 10), 400, 400, "static", {floor=true})
@@ -30,8 +29,7 @@ function love.load()
     local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=300})
     glass.f:setFriction(0.01)
 
-    text       = ""   -- we'll use this to put info text on the screen later
-    persisting = 0    -- we'll use this to store the state of repeated callback calls
+    text = ""   -- we'll use this to put info text on the screen later
 end
 
 function circle(r) return love.physics.newCircleShape(r) end
@@ -57,11 +55,6 @@ local inWater = 0
 function love.update(dt)
     world:update(dt)
 
-    if inWater > 0 then
-      local bouyForce = math.min(400, math.max(0, ball.b:getY() - (water.b:getY() - 350)) * 1.75 )
-      ball.b:applyForce(0, -bouyForce)
-    end
-
     if love.keyboard.isDown("right") then
       ball.b:applyForce(acel.y * -1000, acel.x * 1000)
     elseif love.keyboard.isDown("left") then
@@ -73,6 +66,31 @@ function love.update(dt)
       ball.b:applyForce(acel.x * jumpForce, acel.y * jumpForce)
     elseif love.keyboard.isDown("down") then
       ball.b:applyForce(0, 1000)
+    end
+
+    local contacts = world:getContactList()
+    for i, cont in ipairs(contacts) do
+      if (cont:isTouching()) then
+        local a, b = cont:getFixtures()
+        local ud_a = a:getUserData();
+        local ud_b = b:getUserData();
+        local waterBody = nil
+        local ballBody = nil
+
+        if (ud_a.water) or (ud_b.water) then
+          if (ud_a.ball) then
+            waterBody = b:getBody()
+            ballBody = a:getBody()
+          elseif (ud_b.ball) then
+            waterBody = a:getBody()
+            ballBody = b:getBody()
+          end
+          if (ballBody) then
+            local bouyForce = math.min(400, math.max(0, ballBody:getY() - (waterBody:getY() - 350)) * 1.75 )
+            ballBody:applyForce(0, -bouyForce)
+          end
+        end
+      end
     end
 
     if string.len(text) > 300 then    -- cleanup when 'text' gets too long
@@ -136,7 +154,7 @@ function beginContact(a, b, coll)
     end
 
     --text = text.."\n"..a:getUserData().." colliding with "..b:getUserData().." with a vector normal of: "..x..", "..y
-    text = text .. "\n Speed:" .. contactSpeed
+    text = text .. "\nSpeed:" .. contactSpeed
 end
 
 function getImpactSpeed(a,b)
@@ -149,8 +167,6 @@ function getImpactSpeed(a,b)
 end
 
 function endContact(a, b, coll)
-    persisting = 0
-
     local ud_a = a:getUserData();
     local ud_b = b:getUserData();
 
@@ -174,14 +190,12 @@ function endContact(a, b, coll)
     --text = text.."\n"..a:getUserData().." uncolliding with "..b:getUserData()
 end
 
+-- happens every timer tick for every touching contact
+-- except for sensors -- they only get begin/endContact
 function preSolve(a, b, coll)
-    if persisting == 0 then    -- only say when they first start touching
-        --text = text.."\n"..a:getUserData().." touching "..b:getUserData()
-    elseif persisting < 20 then    -- then just start counting
-        --text = text.." "..persisting
-    end
-    persisting = persisting + 1    -- keep track of how many updates they've been touching for
 end
 
+-- this one too.
 function postSolve(a, b, coll, normalimpulse, tangentimpulse)
+  if (math.abs(normalimpulse) > 100) then text = text.."\nimpact force: "..normalimpulse end
 end
