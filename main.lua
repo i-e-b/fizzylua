@@ -1,56 +1,51 @@
 local okToJump = false
 local acel = {x=0, y=0}
+local objects = {}
+local ball -- keep a reference for simple control
+local water -- need to make this more general!
 
 function love.load()
     world = love.physics.newWorld(0, 200, true)
     --love.physics.setMeter(30) --the height of a meter our world
     --world = love.physics.newWorld(0, 9.81*30, true)
     world:setCallbacks(beginContact, endContact, preSolve, postSolve)
--- friction works on polyshapes, but not circle shapes unless they are pinned,
--- as they will freely rotate
-    ball = {}
-        ball.s = love.physics.newCircleShape(20)
-        ball.b = love.physics.newBody(world, 400,200, "dynamic")
-        ball.f = love.physics.newFixture(ball.b, ball.s)
-        ball.b:setMass(20)
-        ball.b:setFixedRotation( true ) -- makes friction work on simple circle (forces no rotation)
-        ball.f:setRestitution(0.1)    -- make it less bouncy
-        ball.f:setFriction(0.4)
-        ball.f:setUserData("Ball")
+-- friction only works on circle shapes if they are non rotating
+-- as they will freely rotate otherwise
+    ball = NewSimpleThing(circle(20), 400,200, "dynamic", {ball=true})
+    ball.b:setMass(20)
+    ball.b:setFixedRotation( true ) -- makes friction work on simple circle (forces no rotation)
+    ball.f:setRestitution(0.1)    -- make it less bouncy
+    ball.f:setFriction(0.4)
 
-    water = {}
-        water.b = love.physics.newBody(world, 0,600, "static")
-        water.s = love.physics.newRectangleShape(1000,400)
-        water.f = love.physics.newFixture(water.b, water.s)
-        water.f:setUserData("Water")
-        water.f:setSensor(true)
+    water = NewSimpleThing(rect(1000,400), 0, 600, "static", {water=true})
+    water.f:setSensor(true)
 
-    static = {}
-        static.b = love.physics.newBody(world, 400,400, "static")
-        static.s = love.physics.newRectangleShape(1000,10)
-        static.f = love.physics.newFixture(static.b, static.s)
-        static.b:setAngle( -0.4 )
-        static.f:setUserData("Block")
-        static.f:setFriction(0.4)
+    local floor1 = NewSimpleThing(rect(1000, 10), 400, 400, "static", {floor=true})
+    floor1.b:setAngle(-0.4)
+    floor1.f:setFriction(0.4)
+    local floor2 = NewSimpleThing(rect(1000, 10), -480, 400, "static", {floor=true})
+    floor2.b:setAngle(0.4)
+    floor2.f:setFriction(0.4)
 
-    static2 = {}
-        static2.b = love.physics.newBody(world, -480,400, "static")
-        static2.s = love.physics.newRectangleShape(1000,10)
-        static2.f = love.physics.newFixture(static2.b, static2.s)
-        static2.b:setAngle( 0.4 )
-        static2.f:setUserData("Block")
-        static2.f:setFriction(0.4)
-
-    glass = {}
-        glass.b = love.physics.newBody(world, 0,400, "static")
-        glass.s = love.physics.newRectangleShape(1000,2)
-        glass.f = love.physics.newFixture(glass.b, glass.s)
-        glass.f:setUserData("Smash")
-        glass.f:setFriction(0.01)
-
+    local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=300})
+    glass.f:setFriction(0.01)
 
     text       = ""   -- we'll use this to put info text on the screen later
     persisting = 0    -- we'll use this to store the state of repeated callback calls
+end
+
+function circle(r) return love.physics.newCircleShape(r) end
+function rect(w,h) return love.physics.newRectangleShape(w,h) end
+
+function NewSimpleThing (shape, x, y, type, userData)
+  local thing = {}
+      thing.b = love.physics.newBody(world, x, y, type)
+      thing.s = shape
+      thing.f = love.physics.newFixture(thing.b, thing.s)
+      thing.data = userData
+      thing.f:setUserData(userData)
+  table.insert(objects, thing);
+  return thing
 end
 
 function love.keypressed(key)
@@ -89,20 +84,25 @@ function love.update(dt)
 end
 
 function love.draw()
-    love.graphics.setColor(255, 255, 255, 255)
-    love.graphics.circle("fill", ball.b:getX(),ball.b:getY(), ball.s:getRadius(), 20)
-    --love.graphics.polygon("line", ball.b:getWorldPoints(ball.s:getPoints()))
+    for i, obj in ipairs(objects) do
+      if (not obj.b:isDestroyed()) then
+        -- set color based on type
+        if (obj.data.floor) then
+          love.graphics.setColor(200, 255, 200, 255)
+        elseif (obj.data.water) then
+          love.graphics.setColor(0, 0, 255, 100)
+        else
+          love.graphics.setColor(255, 255, 255, 255)
+        end
 
-    love.graphics.polygon("fill", static.b:getWorldPoints(static.s:getPoints()))
-    love.graphics.polygon("fill", static2.b:getWorldPoints(static2.s:getPoints()))
-
-
-    if (not glass.b:isDestroyed()) then
-      love.graphics.polygon("fill", glass.b:getWorldPoints(glass.s:getPoints()))
+        -- draw the shape
+        if (obj.data.ball) then
+          love.graphics.circle("fill", obj.b:getX(), obj.b:getY(), obj.s:getRadius(), 20)
+        else
+          love.graphics.polygon("fill", obj.b:getWorldPoints(obj.s:getPoints()))
+        end
+      end
     end
-
-    love.graphics.setColor(0, 0, 255, 100)
-    love.graphics.polygon("fill", water.b:getWorldPoints(water.s:getPoints()))
 
     love.graphics.setColor(255, 255, 0, 255)
     love.graphics.print(text, 10, 10)
@@ -114,22 +114,24 @@ function beginContact(a, b, coll)
     local ud_b = b:getUserData();
     local contactSpeed = getImpactSpeed(a:getBody(),b:getBody())
 
-    if (ud_a == "Ball") or (ud_b == "Ball") then
-      if (ud_a == "Block") or (ud_b == "Block") or (ud_a == "Smash") or (ud_b == "Smash") then
+    if (ud_a.ball) or (ud_b.ball) then
+      if (ud_a.floor) or (ud_b.floor) then
         contactCount = contactCount + 1
         --text = text.."\nContacts: "..contactCount
         acel.x = x
         acel.y = y
         okToJump = true
-      elseif (ud_a == "Water") or (ud_b == "Water") then
+      elseif (ud_a.water) or (ud_b.water) then
         inWater = inWater + 1
         ball.b:setLinearDamping( 4 )
       end
     end
 
-    if (ud_a == "Smash") and (contactSpeed > 300) then
+-- TODO: this should be calculated from the postSolve callback,
+-- so we use the force rather than the speed. http://www.iforce2d.net/b2dtut/sticky-projectiles
+    if (ud_a.smash) and (contactSpeed > ud_a.smash) then
       a:getBody():destroy()
-    elseif (ud_b == "Smash") and (contactSpeed > 300) then
+    elseif (ud_b.smash) and (contactSpeed > ud_b.smash) then
       b:getBody():destroy()
     end
 
@@ -152,10 +154,10 @@ function endContact(a, b, coll)
     local ud_a = a:getUserData();
     local ud_b = b:getUserData();
 
-    if (ud_a == "Ball") or (ud_b == "Ball") then
-      if (ud_a == "Block") or (ud_b == "Block") or (ud_a == "Smash") or (ud_b == "Smash") then
+    if (ud_a.ball) or (ud_b.ball) then
+      if (ud_a.floor) or (ud_b.floor) then
         contactCount = contactCount - 1
-      elseif (ud_a == "Water") or (ud_b == "Water") then
+      elseif (ud_a.water) or (ud_b.water) then
         inWater = inWater - 1
         if inWater < 1 then
           ball.b:setLinearDamping( 0 )
