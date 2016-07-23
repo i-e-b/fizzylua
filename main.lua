@@ -9,17 +9,17 @@ local inWater = false
 local onFloor = false
 
 function love.load()
-  world = love.physics.newWorld(0, 200, true)
-  --love.physics.setMeter(30) --the height of a meter our world
-  --world = love.physics.newWorld(0, 9.81*30, true)
+  --world = love.physics.newWorld(0, 200, true)
+  world = love.physics.newWorld(0, 9.81*20, true)
+  love.physics.setMeter(20) --how many pixels equal a metre.
   world:setCallbacks(beginContact, endContact, preSolve, postSolve)
   -- friction only works on circle shapes if they are non rotating
   -- as they will freely rotate otherwise
-  ball = NewSimpleThing(circle(20), 400,200, "dynamic", {ball=true, passing=nil})
-  ball.b:setMass(20)
+  ball = NewSimpleThing(circle(14), 400,200, "dynamic", {ball=true, passing=nil})
   ball.b:setFixedRotation( true ) -- makes friction work on simple circle (forces no rotation)
   ball.f:setRestitution(0.1)    -- make it less bouncy
   ball.f:setFriction(0.6)
+  ball.b:setMass(20)
 
   local water = NewSimpleThing(rect(1000,400), 0, 600, "static", {water=true})
   water.f:setSensor(true)
@@ -35,14 +35,14 @@ function love.load()
 
   local wall = NewSimpleThing(rect(10, 1000), 1400, 400, "static", {})
 
-  local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=300})
+  local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=6400})
   glass.f:setFriction(0.01)
   -- A few vertical things to break
-  NewSimpleThing(rect(3, 100), 800, 350, "static", {smash=500})
-  NewSimpleThing(rect(3, 100), 850, 350, "static", {smash=500})
-  NewSimpleThing(rect(3, 100), 900, 350, "static", {smash=500})
+  NewSimpleThing(rect(3, 100), 800, 350, "static", {smash=5000})
+  NewSimpleThing(rect(3, 100), 850, 350, "static", {smash=5000})
+  NewSimpleThing(rect(3, 100), 900, 350, "static", {smash=5000})
 
-  NewSimpleThing(rect(50, 100), 1300, 240, "static", {floor=true, oneway=true})
+  NewSimpleThing(rect(50, 10), 1300, 340, "static", {floor=true, oneway=true})
   NewSimpleThing(rect(50, 10), 1200, 300, "static", {floor=true})
   NewSimpleThing(rect(50, 10), 1100, 240, "static", {floor=true})
 end
@@ -85,26 +85,28 @@ function processPhysics(dt)
       local ud_a = a:getUserData();
       local ud_b = b:getUserData();
       local waterBody = nil
+      local waterFix = nil
       local ballBody = nil
-      local floorFix
+      local floorFix = nil
 
       if (ud_a.ball) then ballBody = a:getBody()
-      elseif (ud_a.water) then waterBody = a:getBody()
+      elseif (ud_a.water) then waterFix = a; waterBody = a:getBody()
       elseif (ud_a.floor) then floorFix = a
       end
 
       if (ud_b.ball) then ballBody = b:getBody()
-      elseif (ud_b.water) then waterBody = b:getBody()
+      elseif (ud_b.water) then waterFix = b; waterBody = b:getBody()
       elseif (ud_b.floor) then floorFix = b
       end
 
       if (ballBody) then
         if (waterBody) then
           -- keep the deepest water, so we can have overlap regions
-          waterDepth = math.max(waterDepth, ballBody:getY() - (waterBody:getY() - 350))
+          local r = getRadius(waterFix)
+          waterDepth = math.max(waterDepth, ballBody:getY() - (waterBody:getY() - r))
           inWater = true
-        elseif (floorFix) then
-          onFloor = ball.data.passing ~= floorFix:getBody()
+        elseif (floorFix) and (ball.data.passing ~= floorFix) then
+          onFloor = true
           --onFloor = true
           local x,y = cont:getNormal()
           -- add the normal, and we will scale it at the end
@@ -116,8 +118,11 @@ function processPhysics(dt)
   end
 
   if inWater then
-    local bouyForce = math.min(400, waterDepth * 1.75 )
-    ball.b:applyForce(0, -bouyForce)
+    local bouyForce = math.min(1000, waterDepth + 140 )
+    local hh = getRadius(ball.f) * 0.5
+    if (waterDepth > hh) then
+      ball.b:applyForce(0, -bouyForce * ball.b:getMass())
+    end
     ball.b:setLinearDamping( 4 )
     acel.x = 0
     acel.y = -0.5 -- swimming is half power
@@ -136,25 +141,21 @@ function processPhysics(dt)
   world:update(dt)
 end
 
-function Normalise (x,y)
-  local scale = 1 / math.sqrt(x*x + y*y)
-  return x*scale, y*scale
-end
-
 function love.update(dt)
   processPhysics(dt)
 
+  local v = 140
   if love.keyboard.isDown("right") then
-    ball.b:applyForce(acel.y * -1000, acel.x * 1000)
+    ball.b:applyLinearImpulse(acel.y * -v, acel.x * v)
   elseif love.keyboard.isDown("left") then
-    ball.b:applyForce(acel.y * 1000, acel.x * -1000)
+    ball.b:applyLinearImpulse(acel.y * v, acel.x * -v)
   end
   if love.keyboard.isDown("up") and (okToJump or inWater) then
-    local jumpForce = 1000
-    if (okToJump) then jumpForce = 8000 end
-    ball.b:applyForce(acel.x * jumpForce, acel.y * jumpForce)
+    local jumpForce = v
+    if (okToJump) then jumpForce = v * 7 end
+    ball.b:applyLinearImpulse(acel.x * jumpForce, acel.y * jumpForce)
   elseif love.keyboard.isDown("down") then
-    ball.b:applyForce(0, 1000)
+    ball.b:applyLinearImpulse(0, v)
   end
 
   -- camera follows the ball
@@ -187,7 +188,10 @@ function love.draw()
   end
 
   love.graphics.setColor(255, 255, 0, 255)
-  love.graphics.print(GX..","..GY, 10, 10)
+  local msg = GX..","..GY
+  if onFloor then msg = msg..", floor" end
+  if inWater then msg = msg..", water" end
+  love.graphics.print(msg, 10, 10)
 end
 
 function beginContact(a, b, coll)
@@ -208,6 +212,11 @@ function beginContact(a, b, coll)
   end
 end
 
+function Normalise (x,y)
+  local scale = math.sqrt(x*x + y*y)
+  return x*scale, y*scale
+end
+
 function getImpactSpeed(a,b)
   local ax, ay = a:getLinearVelocity()
   local bx, by = b:getLinearVelocity()
@@ -215,6 +224,15 @@ function getImpactSpeed(a,b)
   local vy = by - ay
 
   return math.sqrt(vx * vx + vy * vy)
+end
+
+function getHeight(fixture)
+  local topLeftX, topLeftY, bottomRightX, bottomRightY = fixture:getBoundingBox()
+  return bottomRightY - topLeftY -- kinda rough!
+end
+function getRadius(fixture)
+  local topLeftX, topLeftY, bottomRightX, bottomRightY = fixture:getBoundingBox()
+  return (bottomRightY - topLeftY) * 0.5 -- incredibly rough!
 end
 
 function endContact(a, b, coll)
