@@ -2,7 +2,8 @@ local okToJump = false
 local acel = {x=0, y=0}
 local objects = {}
 local ball -- keep a reference for simple control
-local text = ""
+local GX = 300
+local GY = 300
 
 function love.load()
   world = love.physics.newWorld(0, 200, true)
@@ -11,7 +12,7 @@ function love.load()
   world:setCallbacks(beginContact, endContact, preSolve, postSolve)
   -- friction only works on circle shapes if they are non rotating
   -- as they will freely rotate otherwise
-  ball = NewSimpleThing(circle(20), 400,200, "dynamic", {ball=true})
+  ball = NewSimpleThing(circle(20), 400,200, "dynamic", {ball=true, passing=nil})
   ball.b:setMass(20)
   ball.b:setFixedRotation( true ) -- makes friction work on simple circle (forces no rotation)
   ball.f:setRestitution(0.1)    -- make it less bouncy
@@ -26,12 +27,21 @@ function love.load()
   local floor2 = NewSimpleThing(rect(800, 10), -480, 400, "static", {floor=true})
   floor2.b:setAngle(0.4)
   floor2.f:setFriction(0.4)
-  local floor3 = NewSimpleThing(rect(800, 10), 700, 400, "static", {floor=true})
+  local floor3 = NewSimpleThing(rect(1400, 10), 1000, 400, "static", {floor=true})
   floor3.f:setFriction(0.8)
+
+  local wall = NewSimpleThing(rect(10, 1000), 1400, 400, "static", {})
 
   local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=300})
   glass.f:setFriction(0.01)
+  -- A few vertical things to break
+  NewSimpleThing(rect(3, 100), 800, 350, "static", {smash=500})
+  NewSimpleThing(rect(3, 100), 850, 350, "static", {smash=500})
+  NewSimpleThing(rect(3, 100), 900, 350, "static", {smash=500})
 
+  NewSimpleThing(rect(50, 10), 1300, 340, "static", {floor=true, oneway=true})
+  NewSimpleThing(rect(50, 10), 1200, 300, "static", {floor=true})
+  NewSimpleThing(rect(50, 10), 1100, 240, "static", {floor=true})
 end
 
 function circle(r) return love.physics.newCircleShape(r) end
@@ -104,13 +114,12 @@ function love.update(dt)
     ball.b:applyForce(0, 1000)
   end
 
-
-  if string.len(text) > 300 then    -- cleanup when 'text' gets too long
-    text = ""
-  end
-
   -- camera follows the ball
-  world:translateOrigin(ball.b:getX() - 300, ball.b:getY() - 300)
+  local dx = math.floor(ball.b:getX() - 300)
+  local dy = math.floor(ball.b:getY() - 300)
+  world:translateOrigin(dx, dy)
+  GX = GX + dx
+  GY = GY + dy
 end
 
 function love.draw()
@@ -135,30 +144,32 @@ function love.draw()
   end
 
   love.graphics.setColor(255, 255, 0, 255)
-  love.graphics.print(text, 10, 10)
+  love.graphics.print(GX..","..GY, 10, 10)
 end
 
 function beginContact(a, b, coll)
-  x,y = coll:getNormal()
+  local x,y = coll:getNormal()
   local ud_a = a:getUserData()
   local ud_b = b:getUserData()
-  local contactSpeed = getImpactSpeed(a:getBody(),b:getBody())
 
   if (ud_a.ball) or (ud_b.ball) then
     if (ud_a.floor) or (ud_b.floor) then
-      if (y < 0) and (math.abs(x) < 0.4) then
+      local floor = a; if (ud_b.floor) then floor = b end
+
+      if (floor:getUserData().oneway) and (y > 0.4) then -- mostly up (refine later)
+        coll:setEnabled(false)
+        ball.data.passing = floor
+      else -- just a regular floor
         contactCount = contactCount + 1
-        acel.x = x
-        acel.y = y
+        acel.x = math.max(-0.4, math.min(x, 0.4))
+        acel.y = math.max(-1, math.min(y, 0))
         okToJump = true
       end
+
     elseif (ud_a.water) or (ud_b.water) then
       inWater = inWater + 1
     end
   end
-
-  --text = text.."\n"..a:getUserData().." colliding with "..b:getUserData().." with a vector normal of: "..x..", "..y
-  text = text .. "\nSpeed:" .. contactSpeed
 end
 
 function getImpactSpeed(a,b)
@@ -176,38 +187,52 @@ function endContact(a, b, coll)
 
   if (ud_a.ball) or (ud_b.ball) then
     if (ud_a.floor) or (ud_b.floor) then
+      ball.data.passing = nil
       contactCount = contactCount - 1
     elseif (ud_a.water) or (ud_b.water) then
       inWater = inWater - 1
     end
 
-    --text = text.."\nContacts: "..contactCount
     if contactCount < 1 then
       acel.x = 0
       acel.y = -0.3 -- small amount of 'air' control
       okToJump = false
     end
   end
-  --text = text.."\n"..a:getUserData().." uncolliding with "..b:getUserData()
 end
 
 -- happens every timer tick for every touching contact
 -- except for sensors -- they only get begin/endContact
 -- here you can choose to 'cancel' the contact (for pass through)
 function preSolve(a, b, coll)
+  -- if the ball is passing through another object,
+  -- and this is the contact with that object, we
+  -- cancel the contact
+  local ud_a = a:getUserData()
+  local ud_b = b:getUserData()
+
+  if (ud_a.ball) or (ud_b.ball) then
+    if (ball.data.passing == a) or (ball.data.passing == b) then
+      coll:setEnabled(false)
+    end
+  end
 end
 
 -- happens every timer tick for every touching contact
 -- except for sensors -- they only get begin/endContact
 -- you can't cancel anymore, but you know the force of impact
 function postSolve(a, b, coll, normalimpulse, tangentimpulse)
-  if (math.abs(normalimpulse) > 40) then text = text.."\nimpact force: "..normalimpulse end
-
-  local ud_a = a:getUserData();
-  local ud_b = b:getUserData();
+  -- Handle smashes. We re-apply some of the normal impulse
+  -- to the impacting object, otherwise you get an odd-looking pause.
+  local ud_a = a:getUserData()
+  local ud_b = b:getUserData()
+  nx, ny = coll:getNormal()
+  local continueForce = normalimpulse * 0.4
   if (ud_a.smash) and (normalimpulse > ud_a.smash) then
     a:getBody():destroy()
+    b:getBody():applyLinearImpulse(-nx*continueForce,-ny*continueForce) -- allow pass through
   elseif (ud_b.smash) and (normalimpulse > ud_b.smash) then
     b:getBody():destroy()
+    a:getBody():applyLinearImpulse(-nx*continueForce,-ny*continueForce) -- allow pass through
   end
 end
