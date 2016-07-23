@@ -5,6 +5,9 @@ local ball -- keep a reference for simple control
 local GX = 300
 local GY = 300
 
+local inWater = false
+local onFloor = false
+
 function love.load()
   world = love.physics.newWorld(0, 200, true)
   --love.physics.setMeter(30) --the height of a meter our world
@@ -39,7 +42,7 @@ function love.load()
   NewSimpleThing(rect(3, 100), 850, 350, "static", {smash=500})
   NewSimpleThing(rect(3, 100), 900, 350, "static", {smash=500})
 
-  NewSimpleThing(rect(50, 10), 1300, 340, "static", {floor=true, oneway=true})
+  NewSimpleThing(rect(50, 100), 1300, 240, "static", {floor=true, oneway=true})
   NewSimpleThing(rect(50, 10), 1200, 300, "static", {floor=true})
   NewSimpleThing(rect(50, 10), 1100, 240, "static", {floor=true})
 end
@@ -67,6 +70,13 @@ end
 
 -- trigger the physics engine and process any general collision processing
 function processPhysics(dt)
+  inWater = false
+  onFloor = false
+
+  local waterDepth = 0
+  local fx = 0
+  local fy = 0 -- floor normal
+
   ball.b:setLinearDamping(0)
   local contacts = world:getContactList()
   for i, cont in ipairs(contacts) do
@@ -76,28 +86,61 @@ function processPhysics(dt)
       local ud_b = b:getUserData();
       local waterBody = nil
       local ballBody = nil
+      local floorFix
 
-      if (ud_a.water) or (ud_b.water) then
-        if (ud_a.ball) then
-          waterBody = b:getBody()
-          ballBody = a:getBody()
-        elseif (ud_b.ball) then
-          waterBody = a:getBody()
-          ballBody = b:getBody()
-        end
-        if (ballBody) then
-          local bouyForce = math.min(400, math.max(0, ballBody:getY() - (waterBody:getY() - 350)) * 1.75 )
-          ballBody:applyForce(0, -bouyForce)
-          ballBody:setLinearDamping( 4 )
+      if (ud_a.ball) then ballBody = a:getBody()
+      elseif (ud_a.water) then waterBody = a:getBody()
+      elseif (ud_a.floor) then floorFix = a
+      end
+
+      if (ud_b.ball) then ballBody = b:getBody()
+      elseif (ud_b.water) then waterBody = b:getBody()
+      elseif (ud_b.floor) then floorFix = b
+      end
+
+      if (ballBody) then
+        if (waterBody) then
+          -- keep the deepest water, so we can have overlap regions
+          waterDepth = math.max(waterDepth, ballBody:getY() - (waterBody:getY() - 350))
+          inWater = true
+        elseif (floorFix) then
+          onFloor = ball.data.passing ~= floorFix:getBody()
+          --onFloor = true
+          local x,y = cont:getNormal()
+          -- add the normal, and we will scale it at the end
+          fx = fx + x
+          fy = fy + y
         end
       end
     end
   end
+
+  if inWater then
+    local bouyForce = math.min(400, waterDepth * 1.75 )
+    ball.b:applyForce(0, -bouyForce)
+    ball.b:setLinearDamping( 4 )
+    acel.x = 0
+    acel.y = -0.5 -- swimming is half power
+    okToJump = false
+  elseif onFloor then
+    fx,fy = Normalise(fx,fy)
+    acel.x = math.max(-0.4, math.min(fx, 0.4))
+    acel.y = math.max(-1, math.min(fy, 0))
+    okToJump = true
+  else
+    acel.x = 0
+    acel.y = -0.3 -- small amount of 'air' control
+    okToJump = false
+  end
+
   world:update(dt)
 end
 
-local contactCount = 0
-local inWater = 0
+function Normalise (x,y)
+  local scale = 1 / math.sqrt(x*x + y*y)
+  return x*scale, y*scale
+end
+
 function love.update(dt)
   processPhysics(dt)
 
@@ -106,7 +149,7 @@ function love.update(dt)
   elseif love.keyboard.isDown("left") then
     ball.b:applyForce(acel.y * 1000, acel.x * -1000)
   end
-  if love.keyboard.isDown("up") and (okToJump or inWater > 0) then
+  if love.keyboard.isDown("up") and (okToJump or inWater) then
     local jumpForce = 1000
     if (okToJump) then jumpForce = 8000 end
     ball.b:applyForce(acel.x * jumpForce, acel.y * jumpForce)
@@ -156,18 +199,11 @@ function beginContact(a, b, coll)
     if (ud_a.floor) or (ud_b.floor) then
       local floor = a; if (ud_b.floor) then floor = b end
 
-      if (floor:getUserData().oneway) and (y > 0.4) then -- mostly up (refine later)
+      if (floor:getUserData().oneway
+        ) and (y > 0.4) then -- mostly up (refine later)
         coll:setEnabled(false)
         ball.data.passing = floor
-      else -- just a regular floor
-        contactCount = contactCount + 1
-        acel.x = math.max(-0.4, math.min(x, 0.4))
-        acel.y = math.max(-1, math.min(y, 0))
-        okToJump = true
       end
-
-    elseif (ud_a.water) or (ud_b.water) then
-      inWater = inWater + 1
     end
   end
 end
@@ -182,22 +218,10 @@ function getImpactSpeed(a,b)
 end
 
 function endContact(a, b, coll)
-  local ud_a = a:getUserData()
-  local ud_b = b:getUserData()
-
-  if (ud_a.ball) or (ud_b.ball) then
-    if (ud_a.floor) or (ud_b.floor) then
-      ball.data.passing = nil
-      contactCount = contactCount - 1
-    elseif (ud_a.water) or (ud_b.water) then
-      inWater = inWater - 1
-    end
-
-    if contactCount < 1 then
-      acel.x = 0
-      acel.y = -0.3 -- small amount of 'air' control
-      okToJump = false
-    end
+  if a == ball.data.passing then
+    ball.data.passing = nil
+  elseif b == ball.data.passing then
+    ball.data.passing = nil
   end
 end
 
