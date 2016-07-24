@@ -37,14 +37,30 @@ function love.load()
 
   local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=6400})
   glass.f:setFriction(0.01)
+
   -- A few vertical things to break
-  NewSimpleThing(rect(3, 100), 800, 350, "static", {smash=5000})
-  NewSimpleThing(rect(3, 100), 850, 350, "static", {smash=5000})
-  NewSimpleThing(rect(3, 100), 900, 350, "static", {smash=5000})
+  NewSimpleThing(rect(3, 100), 800, 350, "dynamic", {smash=170})
+  NewSimpleThing(rect(3, 100), 850, 350, "dynamic", {smash=170})
+  NewSimpleThing(rect(3, 100), 900, 350, "dynamic", {smash=170})
 
   NewSimpleThing(rect(50, 10), 1300, 340, "static", {floor=true, oneway=true})
-  NewSimpleThing(rect(50, 10), 1200, 300, "static", {floor=true})
-  NewSimpleThing(rect(50, 10), 1100, 240, "static", {floor=true})
+  --NewSimpleThing(rect(50, 10), 1200, 300, "static", {floor=true})
+
+  -- some hanging floor sections
+
+  local pin1 = NewSimpleThing(circle(2), 1100,200, "static", {ball=true})
+  pin1.f:setSensor(true)
+  local float1 = NewSimpleThing(rect(50, 10), 1100, 240, "dynamic", {floor=true})
+  float1.b:setLinearDamping(1)
+  love.physics.newRopeJoint( pin1.b, float1.b, 1100,200,  1075, 240,  70, false )
+  love.physics.newRopeJoint( pin1.b, float1.b, 1100,200,  1125, 240,  70, false )
+
+  local pin2 = NewSimpleThing(circle(2), 1200,240, "static", {ball=true})
+  pin2.f:setSensor(true)
+  local float2 = NewSimpleThing(rect(50, 10), 1200, 300, "dynamic", {floor=true})
+  float2.b:setLinearDamping(1)
+  love.physics.newRopeJoint( pin2.b, float2.b, 1200,240,  1175, 300,  70, false )
+  love.physics.newRopeJoint( pin2.b, float2.b, 1200,240,  1225, 300,  70, false )
 end
 
 function circle(r) return love.physics.newCircleShape(r) end
@@ -125,7 +141,11 @@ function processPhysics(dt)
     end
     ball.b:setLinearDamping( 4 )
     acel.x = 0
-    acel.y = -0.5 -- swimming is half power
+    if onFloor then
+      acel.y = -2 -- extra power to kick off or climb out
+    else
+      acel.y = -0.5 -- swimming is half power
+    end
     okToJump = false
   elseif onFloor then
     fx,fy = Normalise(fx,fy)
@@ -153,6 +173,7 @@ function love.update(dt)
   if love.keyboard.isDown("up") and (okToJump or inWater) then
     local jumpForce = v
     if (okToJump) then jumpForce = v * 7 end
+    ball.b:setAngularVelocity( 0 )
     ball.b:applyLinearImpulse(acel.x * jumpForce, acel.y * jumpForce)
   elseif love.keyboard.isDown("down") then
     ball.b:applyLinearImpulse(0, v)
@@ -167,6 +188,17 @@ function love.update(dt)
 end
 
 function love.draw()
+  -- draw joints (just dumb lines at the moment)
+  love.graphics.setColor(255, 255, 255, 127)
+  local joints = world:getJointList()
+  for i, jnt in ipairs(joints) do
+    if (not jnt:isDestroyed()) then
+      local x1, y1, x2, y2 = jnt:getAnchors()
+      love.graphics.line(x1, y1, x2, y2)
+    end
+  end
+
+  -- draw the objects
   for i, obj in ipairs(objects) do
     if (not obj.b:isDestroyed()) then
       -- set color based on type
