@@ -59,8 +59,8 @@ function love.load()
   pin2.f:setSensor(true)
   local float2 = NewSimpleThing(rect(50, 10), 1200, 300, "dynamic", {floor=true})
   float2.b:setLinearDamping(1)
-  love.physics.newRopeJoint( pin2.b, float2.b, 1200,240,  1175, 300,  70, false )
-  love.physics.newRopeJoint( pin2.b, float2.b, 1200,240,  1225, 300,  70, false )
+  love.physics.newDistanceJoint( pin2.b, float2.b, 1200,240,  1175, 300,  false )
+  love.physics.newDistanceJoint( pin2.b, float2.b, 1200,240,  1225, 300,  false )
 end
 
 function circle(r) return love.physics.newCircleShape(r) end
