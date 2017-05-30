@@ -16,9 +16,10 @@ function love.load()
   -- friction only works on circle shapes if they are non rotating
   -- as they will freely rotate otherwise
   ball = NewSimpleThing(circle(14), 400,200, "dynamic", {ball=true, passing=nil})
-  ball.b:setFixedRotation( true ) -- makes friction work on simple circle (forces no rotation)
+  ball.b:setFixedRotation( false ) -- makes friction work on simple circle (forces no rotation)
+  ball.b:setAngularDamping( 10 )
   ball.f:setRestitution(0.1)    -- make it less bouncy
-  ball.f:setFriction(0.6)
+  ball.f:setFriction(20)
   ball.b:setMass(20)
 
   local water = NewSimpleThing(rect(1000,400), 0, 600, "static", {water=true})
@@ -50,15 +51,17 @@ function love.load()
 
   local pin1 = NewSimpleThing(circle(2), 1100,200, "static", {ball=true})
   pin1.f:setSensor(true)
-  local float1 = NewSimpleThing(rect(50, 10), 1100, 240, "dynamic", {floor=true})
+  local float1 = NewSimpleThing(rect(50, 10), 1100, 240, "dynamic", {floor=true, swing=true})
   float1.b:setLinearDamping(1)
+  float1.b:setMass(20)
   love.physics.newRopeJoint( pin1.b, float1.b, 1100,200,  1075, 240,  70, false )
   love.physics.newRopeJoint( pin1.b, float1.b, 1100,200,  1125, 240,  70, false )
 
   local pin2 = NewSimpleThing(circle(2), 1200,240, "static", {ball=true})
   pin2.f:setSensor(true)
-  local float2 = NewSimpleThing(rect(50, 10), 1200, 300, "dynamic", {floor=true})
+  local float2 = NewSimpleThing(rect(50, 10), 1200, 300, "dynamic", {floor=true, swing=true})
   float2.b:setLinearDamping(1)
+  float2.b:setMass(20)
   love.physics.newDistanceJoint( pin2.b, float2.b, 1200,240,  1175, 300,  false )
   love.physics.newDistanceJoint( pin2.b, float2.b, 1200,240,  1225, 300,  false )
 end
@@ -104,15 +107,20 @@ function processPhysics(dt)
       local waterFix = nil
       local ballBody = nil
       local floorFix = nil
+      local floorIsSwing = false
 
       if (ud_a.ball) then ballBody = a:getBody()
       elseif (ud_a.water) then waterFix = a; waterBody = a:getBody()
-      elseif (ud_a.floor) then floorFix = a
+      elseif (ud_a.floor) then
+        floorFix = a
+        floorIsSwing = ud_a.swing
       end
 
       if (ud_b.ball) then ballBody = b:getBody()
       elseif (ud_b.water) then waterFix = b; waterBody = b:getBody()
-      elseif (ud_b.floor) then floorFix = b
+      elseif (ud_b.floor) then
+        floorFix = b
+        floorIsSwing = ud_b.swing
       end
 
       if (ballBody) then
@@ -123,7 +131,6 @@ function processPhysics(dt)
           inWater = true
         elseif (floorFix) and (ball.data.passing ~= floorFix) then
           onFloor = true
-          --onFloor = true
           local x,y = cont:getNormal()
           -- add the normal, and we will scale it at the end
           fx = fx + x
@@ -166,14 +173,26 @@ function love.update(dt)
 
   local v = 140
   if love.keyboard.isDown("right") then
-    ball.b:applyLinearImpulse(acel.y * -v, acel.x * v)
+    if onFloor then
+      ball.b:applyAngularImpulse(1000)
+    else
+      ball.b:applyLinearImpulse(acel.y * -v, acel.x * v)
+      ball.b:applyAngularImpulse(100)
+    end
   elseif love.keyboard.isDown("left") then
-    ball.b:applyLinearImpulse(acel.y * v, acel.x * -v)
+    if onFloor then
+      ball.b:applyAngularImpulse(-1000)
+    else
+      ball.b:applyLinearImpulse(acel.y * v, acel.x * -v)
+      ball.b:applyAngularImpulse(-100)
+    end
+  else
+    -- TODO: counter torque to slow down
   end
   if love.keyboard.isDown("up") and (okToJump or inWater) then
     local jumpForce = v
     if (okToJump) then jumpForce = v * 7 end
-    ball.b:setAngularVelocity( 0 )
+    --ball.b:setAngularVelocity( 0 )
     ball.b:applyLinearImpulse(acel.x * jumpForce, acel.y * jumpForce)
   elseif love.keyboard.isDown("down") then
     ball.b:applyLinearImpulse(0, v)
@@ -212,7 +231,9 @@ function love.draw()
 
       -- draw the shape
       if (obj.data.ball) then
-        love.graphics.circle("fill", obj.b:getX(), obj.b:getY(), obj.s:getRadius(), 20)
+        love.graphics.circle("fill", obj.b:getX(), obj.b:getY(), obj.s:getRadius() - 2, 20)
+        local a = obj.b:getAngle()
+        love.graphics.arc("fill", obj.b:getX(), obj.b:getY(), obj.s:getRadius(), a, a + 1, 4)
       else
         love.graphics.polygon("fill", obj.b:getWorldPoints(obj.s:getPoints()))
       end
