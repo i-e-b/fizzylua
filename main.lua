@@ -17,7 +17,7 @@ function love.load()
   -- as they will freely rotate otherwise
   ball = NewSimpleThing(circle(14), 400,200, "dynamic", {ball=true, passing=nil})
   ball.b:setFixedRotation( false ) -- makes friction work on simple circle (forces no rotation)
-  ball.b:setAngularDamping( 10 )
+  ball.b:setAngularDamping(1)
   ball.f:setRestitution(0.1)    -- make it less bouncy
   ball.f:setFriction(20)
   ball.b:setMass(20)
@@ -173,21 +173,21 @@ function love.update(dt)
 
   local v = 140
   if love.keyboard.isDown("right") then
-    if onFloor then
+    if onFloor and (not inWater) then
       ball.b:applyAngularImpulse(1000)
     else
       ball.b:applyLinearImpulse(acel.y * -v, acel.x * v)
-      ball.b:applyAngularImpulse(100)
     end
   elseif love.keyboard.isDown("left") then
-    if onFloor then
+    if onFloor and (not inWater) then
       ball.b:applyAngularImpulse(-1000)
     else
       ball.b:applyLinearImpulse(acel.y * v, acel.x * -v)
-      ball.b:applyAngularImpulse(-100)
     end
   else
-    -- TODO: counter torque to slow down
+    -- counter torque to slow down
+    local counterTorque = -300 * ball.b:getAngularVelocity()
+    ball.b:applyAngularImpulse(SaturateRange(counterTorque, 1000))
   end
   if love.keyboard.isDown("up") and (okToJump or inWater) then
     local jumpForce = v
@@ -241,7 +241,7 @@ function love.draw()
   end
 
   love.graphics.setColor(255, 255, 0, 255)
-  local msg = GX..","..GY
+  local msg = GX..", "..GY..", "..(math.floor(ball.b:getAngularVelocity() + 0.5))
   if onFloor then msg = msg..", floor" end
   if inWater then msg = msg..", water" end
   love.graphics.print(msg, 10, 10)
@@ -263,6 +263,10 @@ function beginContact(a, b, coll)
       end
     end
   end
+end
+
+function SaturateRange(v,r)
+  return math.min(r, math.max(-r, v))
 end
 
 function Normalise (x,y)
