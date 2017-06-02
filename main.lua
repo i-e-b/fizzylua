@@ -1,12 +1,17 @@
 local okToJump = false
 local acel = {x=0, y=0}
 local objects = {}
+local GX = 300 -- global X offset, to handle camera tracking
+local GY = 300 -- and global Y
 local ball -- keep a reference for simple control
-local GX = 300
-local GY = 300
+local swapper -- something to swap places with
+local mousePoint -- physics object that represents the mouse pointer
+
+local painFade = 0
 
 local inWater = false
 local onFloor = false
+local canSwap = false
 
 function love.load()
   --world = love.physics.newWorld(0, 200, true)
@@ -14,17 +19,29 @@ function love.load()
   love.physics.setMeter(20) --how many pixels equal a metre.
   world:setCallbacks(beginContact, endContact, preSolve, postSolve)
   -- friction only works on circle shapes if they are non rotating
-  -- as they will freely rotate otherwise
-  ball = NewSimpleThing(circle(14), 400,200, "dynamic", {ball=true, passing=nil})
-  ball.b:setFixedRotation( false ) -- makes friction work on simple circle (forces no rotation)
+  -- as they will freely rotate otherwise. This can be done by preventing rotation,
+  -- setting angular damping, or supplying a counter-rotating torque. We do the second two.
+  ball = NewSimpleThing(circle(14), 400,200, "dynamic", {ball=true, passing=nil, isPlayer=true})
   ball.b:setAngularDamping(1)
   ball.f:setRestitution(0.1)    -- make it less bouncy
   ball.f:setFriction(20)
   ball.b:setMass(20)
 
+  -- press space to swap with this thing. Both position and momentum are swapped
+  swapper = NewSimpleThing(rect(20, 30), 480,200, "dynamic", {floor=true})
+  swapper.b:setMass(70) -- different swap masses have different effects
+
+  -- Water is done as a sensor, and we apply a bouyant force separately
+  -- when the player ball is in contact with water.
   local water = NewSimpleThing(rect(1000,400), 0, 600, "static", {water=true})
   water.f:setSensor(true)
 
+  -- a sensor blob that is repeatedly set to the mouse position. Simplest way to do mouse interaction
+  mousePoint = NewSimpleThing(rect(4,4), 0,0, "static", {isMouse=true})
+  mousePoint.f:setSensor(true)
+  mousePoint.b:setFixedRotation(true)
+
+  -- A bunch of floor sections
   local floor1 = NewSimpleThing(rect(400, 10), 200, 480, "static", {floor=true})
   floor1.b:setAngle(-0.4)
   floor1.f:setFriction(0.4)
@@ -33,8 +50,8 @@ function love.load()
   floor2.f:setFriction(0.4)
   local floor3 = NewSimpleThing(rect(1400, 10), 1000, 400, "static", {floor=true})
   floor3.f:setFriction(0.8)
-
-  local wall = NewSimpleThing(rect(10, 1000), 1400, 400, "static", {})
+  NewSimpleThing(rect(10, 300), -840, 100, "static", {})
+  NewSimpleThing(rect(10, 1000), 1400, 400, "static", {})
 
   local glass = NewSimpleThing(rect(1000, 2), 0, 400, "static", {floor=true, smash=6400})
   glass.f:setFriction(0.01)
@@ -42,13 +59,12 @@ function love.load()
   -- A few vertical things to break
   NewSimpleThing(rect(3, 100), 800, 350, "dynamic", {smash=170})
   NewSimpleThing(rect(3, 100), 850, 350, "dynamic", {smash=170})
-  NewSimpleThing(rect(3, 100), 900, 350, "dynamic", {smash=170})
+  NewSimpleThing(rect(7, 100), 900, 350, "dynamic", {smash=1070})
+  NewSimpleThing(rect(10, 10), 940, 380, "static", {floor=true})
 
   NewSimpleThing(rect(50, 10), 1300, 340, "static", {floor=true, oneway=true})
-  --NewSimpleThing(rect(50, 10), 1200, 300, "static", {floor=true})
 
   -- some hanging floor sections
-
   local pin1 = NewSimpleThing(circle(2), 1100,200, "static", {ball=true})
   pin1.f:setSensor(true)
   local float1 = NewSimpleThing(rect(50, 10), 1100, 240, "dynamic", {floor=true, swing=true})
@@ -169,7 +185,9 @@ function processPhysics(dt)
 end
 
 function love.update(dt)
+  updateMousePointer()
   processPhysics(dt)
+  painFade = math.max(0, painFade - dt)
 
   local v = 140
   if love.keyboard.isDown("right") then
@@ -192,10 +210,18 @@ function love.update(dt)
   if love.keyboard.isDown("up") and (okToJump or inWater) then
     local jumpForce = v
     if (okToJump) then jumpForce = v * 7 end
-    --ball.b:setAngularVelocity( 0 )
     ball.b:applyLinearImpulse(acel.x * jumpForce, acel.y * jumpForce)
   elseif love.keyboard.isDown("down") then
     ball.b:applyLinearImpulse(0, v)
+  end
+
+  if love.keyboard.isDown("space") then -- swap ball and 'swapper'
+    if (canSwap) then
+      canSwap = false
+      swapBodies(ball.b, swapper.b)
+    end
+  else
+    canSwap = true
   end
 
   -- camera follows the ball
@@ -207,6 +233,8 @@ function love.update(dt)
 end
 
 function love.draw()
+  love.graphics.setBackgroundColor(255 * painFade, 0, 0, 255)
+
   -- draw joints (just dumb lines at the moment)
   love.graphics.setColor(255, 255, 255, 127)
   local joints = world:getJointList()
@@ -221,7 +249,9 @@ function love.draw()
   for i, obj in ipairs(objects) do
     if (not obj.b:isDestroyed()) then
       -- set color based on type
-      if (obj.data.floor) then
+      if (obj.data.hilight) then
+        love.graphics.setColor(0, 255, 255, 255)
+      elseif (obj.data.floor) then
         love.graphics.setColor(200, 255, 200, 255)
       elseif (obj.data.water) then
         love.graphics.setColor(0, 0, 255, 100)
@@ -245,24 +275,6 @@ function love.draw()
   if onFloor then msg = msg..", floor" end
   if inWater then msg = msg..", water" end
   love.graphics.print(msg, 10, 10)
-end
-
-function beginContact(a, b, coll)
-  local x,y = coll:getNormal()
-  local ud_a = a:getUserData()
-  local ud_b = b:getUserData()
-
-  if (ud_a.ball) or (ud_b.ball) then
-    if (ud_a.floor) or (ud_b.floor) then
-      local floor = a; if (ud_b.floor) then floor = b end
-
-      if (floor:getUserData().oneway
-        ) and (y > 0.4) then -- mostly up (refine later)
-        coll:setEnabled(false)
-        ball.data.passing = floor
-      end
-    end
-  end
 end
 
 function SaturateRange(v,r)
@@ -292,12 +304,81 @@ function getRadius(fixture)
   return (bottomRightY - topLeftY) * 0.5 -- incredibly rough!
 end
 
+-- swap the position and momentum of two bodies
+function swapBodies(a,b)
+  local x1, y1 = a:getPosition()
+  local x2, y2 = b:getPosition()
+
+  local xm1, ym1 = getMomentum(a)
+  local xm2, ym2 = getMomentum(b)
+
+  a:setPosition(x2,y2)
+  b:setPosition(x1,y1)
+
+  a:setLinearVelocity(0,0)
+  b:setLinearVelocity(0,0)
+  a:applyLinearImpulse( xm2, ym2 )
+  b:applyLinearImpulse( xm1, ym1 )
+
+  a:setAwake(true)
+  b:setAwake(true)
+end
+
+function getMomentum(body)
+  local x, y = body:getLinearVelocity()
+  local mass = body:getMass()
+
+  return x*mass,y*mass
+end
+
+function updateMousePointer()
+  -- this is a bit complex, as we need to wake up nearby bodies
+  -- to make beginContact and endContact work properly
+  mousePoint.b:setPosition(love.mouse.getPosition())
+  local topLeftX, topLeftY, bottomRightX, bottomRightY = mousePoint.f:getBoundingBox(1)
+  world:queryBoundingBox(topLeftX, topLeftY, bottomRightX, bottomRightY,
+    function(fixture)
+      if (not fixture:isDestroyed()) then
+        fixture:getBody():setAwake(true)
+      end
+      return true -- always continue
+    end
+  )
+end
+
+function beginContact(a, b, coll)
+  local x,y = coll:getNormal()
+  local ud_a = a:getUserData()
+  local ud_b = b:getUserData()
+
+  if (ud_a.ball) or (ud_b.ball) then
+    if (ud_a.floor) or (ud_b.floor) then
+      local floor = a; if (ud_b.floor) then floor = b end
+
+      if (floor:getUserData().oneway
+        ) and (y > 0.4) then -- mostly up (refine later)
+        coll:setEnabled(false)
+        ball.data.passing = floor
+      end
+    end
+  end
+
+  if (ud_a.isMouse) then ud_b.hilight = true end
+  if (ud_b.isMouse) then ud_a.hilight = true end
+end
+
 function endContact(a, b, coll)
+  local ud_a = a:getUserData()
+  local ud_b = b:getUserData()
+
   if a == ball.data.passing then
     ball.data.passing = nil
   elseif b == ball.data.passing then
     ball.data.passing = nil
   end
+
+  if (ud_a.isMouse) then ud_b.hilight = false end
+  if (ud_b.isMouse) then ud_a.hilight = false end
 end
 
 -- happens every timer tick for every touching contact
@@ -326,6 +407,9 @@ function postSolve(a, b, coll, normalimpulse, tangentimpulse)
   local ud_a = a:getUserData()
   local ud_b = b:getUserData()
   nx, ny = coll:getNormal()
+
+  if (ud_a.isPlayer or ud_b.isPlayer) and (normalimpulse > 6000) then painFade = 1 end
+
   local continueForce = normalimpulse * 0.4
   if (ud_a.smash) and (normalimpulse > ud_a.smash) then
     a:getBody():destroy()
